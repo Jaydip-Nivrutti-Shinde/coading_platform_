@@ -1,13 +1,33 @@
 import { useParams } from 'react-router';
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import axios from 'axios';
+import { uploadVideo } from '../utils/uploadVideo';
+import { apiErrorMessage } from '../utils/apiErrorMessage';
 import axiosClient from '../utils/axiosClient'
+
+const pendingKey = problemId => `pending-video:${problemId}`;
+const readPendingUpload = problemId => {
+  try {
+    const pending = JSON.parse(sessionStorage.getItem(pendingKey(problemId)) || 'null');
+    return typeof pending?.public_id === 'string' ? pending : null;
+  } catch {
+    return null;
+  }
+};
+const rememberPendingUpload = (problemId, asset) => {
+  try {
+    if (asset) sessionStorage.setItem(pendingKey(problemId), JSON.stringify({ public_id: asset.public_id }));
+    else sessionStorage.removeItem(pendingKey(problemId));
+  } catch {
+    // Saving remains possible in this page when browser storage is unavailable.
+  }
+};
 
 function AdminUpload(){
     
     const {problemId}  = useParams();
     
+    const [pendingUpload, setPendingUpload] = useState(() => readPendingUpload(problemId));
     const [uploading, setUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [uploadedVideo, setUploadedVideo] = useState(null);
@@ -24,63 +44,39 @@ function AdminUpload(){
     
       const selectedFile = watch('videoFile')?.[0];
     
-      // Upload video to Cloudinary
+      useEffect(() => {
+        setPendingUpload(readPendingUpload(problemId));
+        setUploadedVideo(null);
+        reset();
+      }, [problemId, reset]);
+
       const onSubmit = async (data) => {
-        const file = data.videoFile[0];
-        
         setUploading(true);
-        setUploadProgress(0);
+        setUploadProgress(pendingUpload ? 100 : 0);
+        setUploadedVideo(null);
         clearErrors();
-    
         try {
-          // Step 1: Get upload signature from backend
-          const signatureResponse = await axiosClient.get(`/video/create/${problemId}`);
-          const { signature, timestamp, public_id, api_key, cloud_name, upload_url } = signatureResponse.data;
-    
-          // Step 2: Create FormData for Cloudinary upload
-          const formData = new FormData();
-          formData.append('file', file);
-          formData.append('signature', signature);
-          formData.append('timestamp', timestamp);
-          formData.append('public_id', public_id);
-          formData.append('api_key', api_key);
-    
-          // Step 3: Upload directly to Cloudinary
-          const uploadResponse = await axios.post(upload_url, formData, {
-            headers: {
-              'Content-Type': 'multipart/form-data',
-            },
-            onUploadProgress: (progressEvent) => {
-              const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-              setUploadProgress(progress);
-            },
+          let asset = pendingUpload;
+          if (!asset) {
+            const { data: credentials } = await axiosClient.get(`/video/create/${problemId}`);
+            asset = await uploadVideo(data.videoFile[0], credentials, setUploadProgress);
+            rememberPendingUpload(problemId, asset);
+            setPendingUpload(asset);
+          }
+          const { data: metadata } = await axiosClient.post('/video/save', {
+            problemId, cloudinaryPublicId: asset.public_id
           });
-    
-          const cloudinaryResult = uploadResponse.data;
-    
-          // Step 4: Save video metadata to backend
-          const metadataResponse = await axiosClient.post('/video/save', {
-            problemId:problemId,
-            cloudinaryPublicId: cloudinaryResult.public_id,
-            secureUrl: cloudinaryResult.secure_url,
-            duration: cloudinaryResult.duration,
-          });
-    
-          setUploadedVideo(metadataResponse.data.videoSolution);
-          reset(); // Reset form after successful upload
-          
-        } catch (err) {
-          console.error('Upload error:', err);
-          setError('root', {
-            type: 'manual',
-            message: err.response?.data?.message || 'Upload failed. Please try again.'
-          });
+          setUploadedVideo(metadata.videoSolution);
+          rememberPendingUpload(problemId, null);
+          setPendingUpload(null);
+          reset();
+        } catch (error) {
+          setError('root', { type: 'manual', message: apiErrorMessage(error, error.message || 'Upload failed. Please try again.') });
         } finally {
           setUploading(false);
-          setUploadProgress(0);
         }
       };
-    
+
       // Format file size
       const formatFileSize = (bytes) => {
         if (bytes === 0) return '0 Bytes';
@@ -103,13 +99,14 @@ function AdminUpload(){
             <div className="card-body">
               <h2 className="card-title">Upload Video</h2>
               
-              <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+              <form onSubmit={pendingUpload ? (event) => { event.preventDefault(); if (!uploading) onSubmit({}); } : handleSubmit(onSubmit)} className="space-y-4">
                 {/* File Input */}
                 <div className="form-control w-full">
                   <label className="label">
                     <span className="label-text">Choose video file</span>
                   </label>
                   <input
+                    id="videoFile"
                     type="file"
                     accept="video/*"
                     {...register('videoFile', {
@@ -129,7 +126,7 @@ function AdminUpload(){
                       }
                     })}
                     className={`file-input file-input-bordered w-full ${errors.videoFile ? 'file-input-error' : ''}`}
-                    disabled={uploading}
+                    disabled={uploading || Boolean(pendingUpload)}
                   />
                   {errors.videoFile && (
                     <label className="label">
@@ -164,16 +161,17 @@ function AdminUpload(){
                   </div>
                 )}
     
+                {pendingUpload && !uploadedVideo && <p className="text-sm">Video uploaded. If saving fails, retry saving without uploading the file again.</p>}
                 {/* Error Message */}
                 {errors.root && (
-                  <div className="alert alert-error">
+                  <div role="alert" className="alert alert-error">
                     <span>{errors.root.message}</span>
                   </div>
                 )}
     
                 {/* Success Message */}
                 {uploadedVideo && (
-                  <div className="alert alert-success">
+                  <div role="status" className="alert alert-success">
                     <div>
                       <h3 className="font-bold">Upload Successful!</h3>
                       <p className="text-sm">Duration: {formatDuration(uploadedVideo.duration)}</p>
@@ -189,7 +187,7 @@ function AdminUpload(){
                     disabled={uploading}
                     className={`btn btn-primary ${uploading ? 'loading' : ''}`}
                   >
-                    {uploading ? 'Uploading...' : 'Upload Video'}
+                    {uploading ? (uploadProgress === 100 ? 'Saving video...' : 'Uploading...') : pendingUpload ? 'Retry Saving Video' : 'Upload Video'}
                   </button>
                 </div>
               </form>

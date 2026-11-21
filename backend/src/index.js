@@ -1,6 +1,6 @@
 const express = require('express');
 const http = require('http');
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '.env'), quiet: true });
 const main = require('./config/db');
 const cookieParser = require('cookie-parser');
 const authRouter = require('./routes/userAuth');
@@ -50,4 +50,6 @@ const InitalizeConnection = async () => {
     }
 };
 
-InitalizeConnection();
+if (require.main === module) InitalizeConnection();
+
+module.exports = { app, server };

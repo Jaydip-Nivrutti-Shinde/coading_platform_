@@ -9,7 +9,7 @@ const LANGUAGE_IDS = {
 const getLanguageById = (lang) => {
     if (!lang) return undefined;
 
-    return LANGUAGE_IDS[lang.toLowerCase()];
+    return LANGUAGE_IDS[typeof lang === 'string' ? lang.toLowerCase() : ''];
 };
 
 
@@ -17,6 +17,7 @@ const submitBatch = async (submissions) => {
 
     const options = {
         method: "POST",
+        timeout: 15000,
         url: "https://judge0-ce.p.rapidapi.com/submissions/batch",
 
         params: {
@@ -66,6 +67,7 @@ const submitToken = async (resultToken) => {
 
     const options = {
         method: "GET",
+        timeout: 15000,
 
         url: "https://judge0-ce.p.rapidapi.com/submissions/batch",
 
@@ -92,7 +94,7 @@ const submitToken = async (resultToken) => {
 
             const submissions = response.data?.submissions || [];
 
-            const isResultObtained = submissions.every(
+            const isResultObtained = submissions.length === resultToken.length && submissions.every(
                 (result) => result.status_id > 2
             );
 

@@ -11,6 +11,7 @@ import Admin from "./pages/Admin";
 import AdminPanel from "./components/AdminPanel";
 import AdminDelete from "./components/AdminDelete";
 import AdminVideo from "./components/AdminVideo";
+import AdminUpdate from './components/AdminUpdate';
 import AdminUpload from "./components/AdminUpload";
 import MeetingRoom from "./pages/MeetingRoom";
 import VideoCallButton from "./components/videoCall/VideoCallButton";
@@ -29,6 +30,8 @@ function App() {
   const showVideoCallButton =
     isAuthenticated && user?.role !== 'admin' && !activeMeeting;
 
+  if (loading) return <div role="status" className="p-8">Checking your session...</div>;
+
   return (
     <>
       <Routes>
@@ -36,9 +39,11 @@ function App() {
         <Route path="/login" element={isAuthenticated ? <Navigate to="/" /> : <Login />} />
         <Route path="/signup" element={isAuthenticated ? <Navigate to="/" /> : <SignUp />} />
         <Route path="/admin" element={isAuthenticated && user?.role === 'admin' ? <Admin /> : <Navigate to="/" />} />
-        <Route path="/admin/create" element={isAuthenticated && user?.role === 'admin' ? <AdminPanel /> : <Navigate to="/" />} />
+        <Route path="/admin/create" element={isAuthenticated && user?.role === 'admin' ? <AdminPanel key="create" /> : <Navigate to="/" />} />
+        <Route path="/admin/update" element={isAuthenticated && user?.role === 'admin' ? <AdminUpdate /> : <Navigate to="/" />} />
+        <Route path="/admin/update/:problemId" element={isAuthenticated && user?.role === 'admin' ? <AdminPanel key="edit" /> : <Navigate to="/" />} />
         <Route path="/admin/delete" element={isAuthenticated && user?.role === 'admin' ? <AdminDelete /> : <Navigate to="/" />} />
-        <Route path="/problem/:problemId" element={<ProblemPage />} />
+        <Route path="/problem/:problemId" element={isAuthenticated ? <ProblemPage /> : <Navigate to="/login" />} />
         <Route path="/admin/video" element={isAuthenticated && user?.role === 'admin' ? <AdminVideo /> : <Navigate to="/" />} />
         <Route path="/admin/upload/:problemId" element={isAuthenticated && user?.role === 'admin' ? <AdminUpload /> : <Navigate to="/" />} />
       </Routes>

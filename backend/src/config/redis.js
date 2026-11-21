@@ -19,8 +19,8 @@ const redisClient = createClient({
     username: 'default',
     password: process.env.REDIS_PASS,
     socket: {
-        host: 'redis-11862.crce276.ap-south-1-3.ec2.cloud.redislabs.com',
-        port: 11862,
+        host: 'redis-10293.c305.ap-south-1-1.ec2.cloud.redislabs.com',
+        port: 10293,
         reconnectStrategy: (retries) => {
             if (retries > 10) {
                 console.log('[Redis] Too many reconnects, giving up');
@@ -46,3 +46,4 @@ redisClient.on('reconnecting', () => {
 });
 
 module.exports = redisClient;
+

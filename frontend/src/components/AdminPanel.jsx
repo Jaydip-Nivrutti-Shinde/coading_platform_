@@ -2,12 +2,14 @@ import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import axiosClient from '../utils/axiosClient';
-import { useNavigate } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
+import { useEffect, useState } from 'react';
+import { apiErrorMessage } from '../utils/apiErrorMessage';
 
-// Zod schema matching the problem schema
+// Zod schema
 const problemSchema = z.object({
-  title: z.string().min(1, 'Title is required'),
-  description: z.string().min(1, 'Description is required'),
+  title: z.string().trim().min(1, 'Title is required'),
+  description: z.string().trim().min(1, 'Description is required'),
   difficulty: z.enum(['easy', 'medium', 'hard']),
   tags: z.enum(['array', 'linkedList', 'graph', 'dp']),
   visibleTestCases: z.array(
@@ -37,7 +39,6 @@ const problemSchema = z.object({
   ).length(3, 'All three languages required')
 });
 
-// Language metadata for beautiful UI (design-only helper)
 const LANGUAGES = [
   { key: 'C++', badge: 'bg-sky-500/15 text-sky-300 border-sky-500/30', dot: 'bg-sky-400' },
   { key: 'Java', badge: 'bg-orange-500/15 text-orange-300 border-orange-500/30', dot: 'bg-orange-400' },
@@ -46,14 +47,27 @@ const LANGUAGES = [
 
 function AdminPanel() {
   const navigate = useNavigate();
+  const { problemId } = useParams();
+  const editing = Boolean(problemId);
+  const [loading, setLoading] = useState(editing);
+  const [loadError, setLoadError] = useState('');
+  const [submitError, setSubmitError] = useState('');
   const {
     register,
     control,
     handleSubmit,
-    formState: { errors }
+    reset,
+    formState: { errors, isSubmitting }
   } = useForm({
     resolver: zodResolver(problemSchema),
     defaultValues: {
+      title: '',
+      description: '',
+      difficulty: 'easy',
+      tags: 'array',
+      // 🔴 FIX: Start with 1 empty test case so validation doesn't fail initially
+      visibleTestCases: [{ input: '', output: '', explanation: '' }],
+      hiddenTestCases: [{ input: '', output: '' }],
       startCode: [
         { language: 'C++', initialCode: '' },
         { language: 'Java', initialCode: '' },
@@ -85,17 +99,44 @@ function AdminPanel() {
     name: 'hiddenTestCases'
   });
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!problemId) return;
+    setLoading(true);
+    setLoadError('');
+    axiosClient.get(`/problem/edit/${problemId}`).then(({ data }) => {
+      if (cancelled) return;
+      const languageFields = (field, codeKey) => LANGUAGES.map(({ key }) => ({
+        language: key,
+        [codeKey]: data[field]?.find(item => item.language.toLowerCase() === key.toLowerCase())?.[codeKey] || ''
+      }));
+      reset({ ...data, startCode: languageFields('startCode', 'initialCode'),
+        referenceSolution: languageFields('referenceSolution', 'completeCode') });
+    }).catch(error => {
+      if (!cancelled) setLoadError(apiErrorMessage(error, 'Failed to load problem'));
+    }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [problemId, reset]);
+
   const onSubmit = async (data) => {
+    setSubmitError('');
     try {
-      await axiosClient.post('/problem/create', data);
-      alert('Problem created successfully!');
-      navigate('/');
+      if (editing) await axiosClient.put(`/problem/update/${problemId}`, data);
+      else await axiosClient.post('/problem/create', data);
+      navigate('/admin/update', { state: { message: editing ? 'Problem updated successfully' : 'Problem created successfully' } });
     } catch (error) {
-      alert(`Error: ${error.response?.data?.message || error.message}`);
+      const result = error.response?.data?.result;
+      setSubmitError(result
+        ? `${apiErrorMessage(error)} (${result.language}, ${result.testCaseType} test, input: ${result.input}): ${result.stderr || result.compile_output || result.message || result.status?.description || 'Incorrect output'}`
+        : apiErrorMessage(error, 'Unable to save problem'));
     }
   };
 
-  // Shared input base classes for consistency
+  const onInvalid = () => setSubmitError('Please complete all required fields, including test cases and code for each language.');
+
+  if (loading) return <div role="status" className="p-8">Loading problem...</div>;
+  if (loadError) return <div role="alert" className="alert alert-error m-4">{loadError}</div>;
+
   const inputBase =
     'w-full rounded-xl bg-slate-900/60 border border-slate-700 text-slate-100 placeholder-slate-500 ' +
     'px-4 py-2.5 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/30';
@@ -104,17 +145,16 @@ function AdminPanel() {
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-200 py-8 px-4 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-5xl">
 
-        {/* Header */}
         <div className="mb-8 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-indigo-400 font-semibold mb-1">
               Admin · Problem Builder
             </p>
             <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-300 via-purple-300 to-pink-300 bg-clip-text text-transparent">
-              Create New Problem
+              {editing ? 'Update Problem' : 'Create New Problem'}
             </h1>
             <p className="text-sm text-slate-400 mt-1">
-              Fill in the details below to publish a new coding challenge.
+              {editing ? 'Edit the problem details and save your changes.' : 'Fill in the details below to publish a new coding challenge.'}
             </p>
           </div>
           <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-slate-400 border border-slate-700 rounded-full px-3 py-1.5 bg-slate-900/60">
@@ -123,7 +163,8 @@ function AdminPanel() {
           </div>
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+        {submitError && <div role="alert" className="alert alert-error mb-4 whitespace-pre-wrap">{submitError}</div>}
+        <form onSubmit={handleSubmit(onSubmit, onInvalid)} className="space-y-6">
 
           {/* ================= BASIC INFORMATION ================= */}
           <section className="rounded-2xl border border-slate-800 bg-slate-900/70 backdrop-blur-sm shadow-xl shadow-black/30 overflow-hidden">
@@ -133,7 +174,6 @@ function AdminPanel() {
             </div>
 
             <div className="p-6 space-y-5">
-              {/* Title */}
               <div className="form-control">
                 <label className="label pb-1.5">
                   <span className="text-sm font-medium text-slate-300">
@@ -141,6 +181,7 @@ function AdminPanel() {
                   </span>
                 </label>
                 <input
+                  id={'title'}
                   {...register('title')}
                   placeholder="e.g. Two Sum"
                   className={`${inputBase} ${errors.title ? 'border-red-500/60 focus:border-red-400 focus:ring-red-500/30' : ''}`}
@@ -152,7 +193,6 @@ function AdminPanel() {
                 )}
               </div>
 
-              {/* Description */}
               <div className="form-control">
                 <label className="label pb-1.5">
                   <span className="text-sm font-medium text-slate-300">
@@ -160,6 +200,7 @@ function AdminPanel() {
                   </span>
                 </label>
                 <textarea
+                  id={'description'}
                   {...register('description')}
                   placeholder="Write a clear problem statement..."
                   rows={5}
@@ -172,7 +213,6 @@ function AdminPanel() {
                 )}
               </div>
 
-              {/* Difficulty + Tag */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <div className="form-control">
                   <label className="label pb-1.5">
@@ -214,8 +254,6 @@ function AdminPanel() {
             </div>
 
             <div className="p-6 space-y-8">
-
-              {/* ---------- Visible Test Cases ---------- */}
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <h3 className="text-sm font-semibold uppercase tracking-wider text-emerald-300 flex items-center gap-2">
@@ -248,6 +286,7 @@ function AdminPanel() {
                       </span>
                       <button
                         type="button"
+                        disabled={visibleFields.length <= 1 || isSubmitting}
                         onClick={() => removeVisible(index)}
                         className="inline-flex items-center gap-1 rounded-md bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-medium px-2.5 py-1 transition"
                       >
@@ -261,6 +300,7 @@ function AdminPanel() {
                           <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Input *</span>
                         </label>
                         <input
+                          id={`visibleTestCases.${index}.input`}
                           {...register(`visibleTestCases.${index}.input`)}
                           placeholder="e.g. nums = [2,7,11,15], target = 9"
                           className={`${inputBase} ${errors?.visibleTestCases?.[index]?.input ? 'border-red-500/60' : ''}`}
@@ -275,6 +315,7 @@ function AdminPanel() {
                           <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Output *</span>
                         </label>
                         <input
+                          id={`visibleTestCases.${index}.output`}
                           {...register(`visibleTestCases.${index}.output`)}
                           placeholder="e.g. [0,1]"
                           className={`${inputBase} ${errors?.visibleTestCases?.[index]?.output ? 'border-red-500/60' : ''}`}
@@ -290,6 +331,7 @@ function AdminPanel() {
                         <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Explanation *</span>
                       </label>
                       <textarea
+                        id={`visibleTestCases.${index}.explanation`}
                         {...register(`visibleTestCases.${index}.explanation`)}
                         placeholder="Explain why this output is correct..."
                         rows={2}
@@ -303,10 +345,8 @@ function AdminPanel() {
                 ))}
               </div>
 
-              {/* Divider */}
               <div className="h-px bg-gradient-to-r from-transparent via-slate-800 to-transparent" />
 
-              {/* ---------- Hidden Test Cases ---------- */}
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <h3 className="text-sm font-semibold uppercase tracking-wider text-amber-300 flex items-center gap-2">
@@ -339,6 +379,7 @@ function AdminPanel() {
                       </span>
                       <button
                         type="button"
+                        disabled={hiddenFields.length <= 1 || isSubmitting}
                         onClick={() => removeHidden(index)}
                         className="inline-flex items-center gap-1 rounded-md bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-medium px-2.5 py-1 transition"
                       >
@@ -352,6 +393,7 @@ function AdminPanel() {
                           <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Input *</span>
                         </label>
                         <input
+                          id={`hiddenTestCases.${index}.input`}
                           {...register(`hiddenTestCases.${index}.input`)}
                           placeholder="e.g. nums = [3,2,4], target = 6"
                           className={`${inputBase} ${errors?.hiddenTestCases?.[index]?.input ? 'border-red-500/60' : ''}`}
@@ -366,6 +408,7 @@ function AdminPanel() {
                           <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Output *</span>
                         </label>
                         <input
+                          id={`hiddenTestCases.${index}.output`}
                           {...register(`hiddenTestCases.${index}.output`)}
                           placeholder="e.g. [1,2]"
                           className={`${inputBase} ${errors?.hiddenTestCases?.[index]?.output ? 'border-red-500/60' : ''}`}
@@ -406,6 +449,7 @@ function AdminPanel() {
                         </span>
                       </label>
                       <textarea
+                        id={`startCode.${index}.initialCode`}
                         {...register(`startCode.${index}.initialCode`)}
                         rows={7}
                         spellCheck={false}
@@ -419,7 +463,6 @@ function AdminPanel() {
                           {errors.startCode[index].initialCode.message}
                         </span>
                       )}
-                      
                     </div>
 
                     <div className="form-control">
@@ -429,6 +472,7 @@ function AdminPanel() {
                         </span>
                       </label>
                       <textarea
+                        id={`referenceSolution.${index}.completeCode`}
                         {...register(`referenceSolution.${index}.completeCode`)}
                         rows={7}
                         spellCheck={false}
@@ -457,17 +501,19 @@ function AdminPanel() {
           <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-2 pb-10">
             <button
               type="button"
-              onClick={() => navigate('/')}
+              disabled={isSubmitting}
+              onClick={() => navigate('/admin')}
               className="rounded-xl border border-slate-700 bg-slate-900/60 hover:bg-slate-800/80 text-slate-300 font-medium px-6 py-3 transition"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="group relative overflow-hidden rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:via-purple-500 hover:to-pink-500 text-white font-semibold px-8 py-3 shadow-lg shadow-indigo-900/50 transition-all active:scale-[0.98]"
+              disabled={isSubmitting}
+              className="group relative overflow-hidden rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:via-purple-500 hover:to-pink-500 text-white font-semibold px-8 py-3 shadow-lg shadow-indigo-900/50 transition-all active:scale-[0.98] disabled:opacity-50"
             >
               <span className="relative z-10 flex items-center justify-center gap-2">
-                <span>✦</span> Create Problem
+                <span>✦</span> {isSubmitting ? 'Validating and saving...' : editing ? 'Update Problem' : 'Create Problem'}
               </span>
               <span className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/20 to-transparent" />
             </button>
