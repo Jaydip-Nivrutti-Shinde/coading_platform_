@@ -163,7 +163,7 @@ const solveDoubt = async (req, res) => {
             .join("\n");
 
         const response = await ai.models.generateContent({
-            model: "gemini-3.8-flash",
+            model: "gemini-3.5-flash-lite",
             contents: conversationText,
             config: {
                 systemInstruction: ` You are an expert DSA tutor. Help ONLY with the current problem.
